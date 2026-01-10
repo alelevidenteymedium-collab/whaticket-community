@@ -48,10 +48,13 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 
 WORKDIR /app/backend
 
-# Copiar backend compilado
+# Copiar backend compilado y archivos necesarios
 COPY --from=builder /app/backend/dist ./dist
 COPY --from=builder /app/backend/node_modules ./node_modules
 COPY --from=builder /app/backend/package*.json ./
+COPY --from=builder /app/backend/src/config ./src/config
+COPY --from=builder /app/backend/src/database ./src/database
+COPY --from=builder /app/backend/.sequelizerc ./.sequelizerc
 
 # Copiar frontend compilado para servirlo
 COPY --from=builder /app/frontend/build ./public
@@ -59,9 +62,7 @@ COPY --from=builder /app/frontend/build ./public
 # Instalar sequelize-cli
 RUN npm install -g sequelize-cli
 
-# Copiar archivos necesarios para migraciones
-COPY --from=builder /app/backend/src ./src
-
 EXPOSE 8080
 
-CMD ["sh", "-c", "npx sequelize-cli db:migrate && npx sequelize-cli db:seed:all && npm start"]
+# Iniciar sin migraciones (ya están ejecutadas antes)
+CMD ["npm", "start"]
