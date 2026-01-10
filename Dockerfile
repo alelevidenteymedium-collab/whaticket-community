@@ -27,6 +27,9 @@ COPY backend/package*.json ./backend/
 WORKDIR /app/backend
 RUN npm install
 
+# Instalar sequelize-cli globalmente
+RUN npm install -g sequelize-cli
+
 # Copiar el resto del código
 WORKDIR /app
 COPY backend ./backend
@@ -38,5 +41,5 @@ RUN npm run build
 # Exponer puerto
 EXPOSE 8080
 
-# Comando de inicio (CAMBIO AQUÍ)
-CMD ["npm", "start"]
+# Ejecutar migraciones y seeds, luego iniciar
+CMD ["sh", "-c", "npx sequelize-cli db:migrate && npx sequelize-cli db:seed:all && npm start"]
