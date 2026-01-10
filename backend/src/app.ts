@@ -5,7 +5,7 @@ import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import * as Sentry from "@sentry/node";
-
+import path from 'path';
 import "./database";
 import uploadConfig from "./config/upload";
 import AppError from "./errors/AppError";
@@ -29,7 +29,12 @@ app.use("/public", express.static(uploadConfig.directory));
 app.use(routes);
 
 app.use(Sentry.Handlers.errorHandler());
+app.use(express.static(path.join(__dirname, '../public')));
 
+// Redirigir todas las rutas no API al index.html
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
 app.use(async (err: Error, req: Request, res: Response, _: NextFunction) => {
   if (err instanceof AppError) {
     logger.warn(err);
@@ -41,3 +46,5 @@ app.use(async (err: Error, req: Request, res: Response, _: NextFunction) => {
 });
 
 export default app;
+
+
