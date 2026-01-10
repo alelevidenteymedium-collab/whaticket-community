@@ -26,6 +26,9 @@ import CreateContactService from "../ContactServices/CreateContactService";
 import GetContactService from "../ContactServices/GetContactService";
 import formatBody from "../../helpers/Mustache";
 
+// ✨ NUEVO: Importar servicio de Gemini
+import GeminiService from "../GeminiService";
+
 interface Session extends Client {
   id?: number;
 }
@@ -63,7 +66,6 @@ const verifyQuotedMessage = async (
   return quotedMsg;
 };
 
-// generate random id string for file names, function got from: https://stackoverflow.com/a/1349426/1851801
 function makeRandomId(length: number) {
   let result = "";
   const characters =
@@ -152,7 +154,6 @@ const verifyMessage = async (
     quotedMsgId: quotedMsg?.id
   };
 
-  // temporaryly disable ts checks because of type definition bug for Location object
   // @ts-ignore
   await ticket.update({
     lastMessage:
@@ -176,7 +177,6 @@ const prepareLocation = (msg: WbotMessage): WbotMessage => {
 
   msg.body = "data:image/png;base64," + msg.body + "|" + gmapsUrl;
 
-  // temporaryly disable ts checks because of type definition bug for Location object
   // @ts-ignore
   msg.body +=
     "|" +
@@ -254,12 +254,92 @@ const isValidMsg = (msg: WbotMessage): boolean => {
     msg.type === "image" ||
     msg.type === "document" ||
     msg.type === "vcard" ||
-    //msg.type === "multi_vcard" ||
     msg.type === "sticker" ||
     msg.type === "location"
   )
     return true;
   return false;
+};
+
+// ✨ NUEVA FUNCIÓN: Obtener historial de conversación
+const getConversationHistory = async (ticketId: number): Promise<string> => {
+  try {
+    const messages = await Message.findAll({
+      where: { ticketId },
+      order: [["createdAt", "DESC"]],
+      limit: 10, // Últimos 10 mensajes
+      include: ["contact"]
+    });
+
+    if (!messages || messages.length === 0) {
+      return "";
+    }
+
+    // Formatear mensajes para el contexto de Gemini
+    const history = messages
+      .reverse()
+      .map((msg: any) => {
+        const sender = msg.fromMe ? "Asistente" : "Cliente";
+        return `${sender}: ${msg.body}`;
+      })
+      .join("\n");
+
+    return history;
+  } catch (error) {
+    logger.error(`Error obteniendo historial: ${error}`);
+    return "";
+  }
+};
+
+// ✨ NUEVA FUNCIÓN: Respuesta automática con Gemini
+const handleGeminiAutoResponse = async (
+  wbot: Session,
+  msg: WbotMessage,
+  ticket: Ticket,
+  contact: Contact
+) => {
+  try {
+    // Solo responder si:
+    // 1. No es mensaje propio
+    // 2. No hay agente asignado al ticket
+    // 3. El ticket tiene una cola asignada (ya pasó por el menú inicial)
+    if (msg.fromMe || ticket.userId || !ticket.queueId) {
+      return;
+    }
+
+    logger.info(`🤖 Generando respuesta automática con Gemini para ticket ${ticket.id}`);
+
+    // Obtener historial de conversación
+    const conversationHistory = await getConversationHistory(ticket.id);
+
+    // Generar respuesta con Gemini
+    const aiResponse = await GeminiService.generateResponse(
+      msg.body,
+      conversationHistory
+    );
+
+    if (!aiResponse) {
+      logger.warn("Gemini no generó respuesta");
+      return;
+    }
+
+    // Agregar carácter especial para que no se procese de nuevo
+    const formattedResponse = `\u200e${aiResponse}`;
+
+    // Enviar respuesta
+    const sentMessage = await wbot.sendMessage(
+      `${contact.number}@c.us`,
+      formattedResponse
+    );
+
+    // Guardar mensaje en la base de datos
+    await verifyMessage(sentMessage, ticket, contact);
+
+    logger.info(`✅ Respuesta automática enviada al ticket ${ticket.id}`);
+  } catch (error) {
+    logger.error(`Error en respuesta automática con Gemini: ${error}`);
+    Sentry.captureException(error);
+  }
 };
 
 const handleMessage = async (
@@ -275,19 +355,13 @@ const handleMessage = async (
     let groupContact: Contact | undefined;
 
     if (msg.fromMe) {
-      // messages sent automatically by wbot have a special character in front of it
-      // if so, this message was already been stored in database;
       if (/\u200e/.test(msg.body[0])) return;
-
-      // media messages sent from me from cell phone, first comes with "hasMedia = false" and type = "image/ptt/etc"
-      // in this case, return and let this message be handled by "media_uploaded" event, when it will have "hasMedia = true"
 
       if (
         !msg.hasMedia &&
         msg.type !== "location" &&
         msg.type !== "chat" &&
         msg.type !== "vcard"
-        //&& msg.type !== "multi_vcard"
       )
         return;
 
@@ -345,6 +419,18 @@ const handleMessage = async (
       await verifyQueue(wbot, msg, ticket, contact);
     }
 
+    // ✨ NUEVO: Respuesta automática con Gemini
+    // Solo para mensajes de texto del cliente en tickets con cola asignada
+    if (
+      !msg.fromMe &&
+      !chat.isGroup &&
+      msg.type === "chat" &&
+      ticket.queueId &&
+      !ticket.userId
+    ) {
+      await handleGeminiAutoResponse(wbot, msg, ticket, contact);
+    }
+
     if (msg.type === "vcard") {
       try {
         const array = msg.body.split("\n");
@@ -372,67 +458,6 @@ const handleMessage = async (
         console.log(error);
       }
     }
-
-    /* if (msg.type === "multi_vcard") {
-      try {
-        const array = msg.vCards.toString().split("\n");
-        let name = "";
-        let number = "";
-        const obj = [];
-        const conts = [];
-        for (let index = 0; index < array.length; index++) {
-          const v = array[index];
-          const values = v.split(":");
-          for (let ind = 0; ind < values.length; ind++) {
-            if (values[ind].indexOf("+") !== -1) {
-              number = values[ind];
-            }
-            if (values[ind].indexOf("FN") !== -1) {
-              name = values[ind + 1];
-            }
-            if (name !== "" && number !== "") {
-              obj.push({
-                name,
-                number
-              });
-              name = "";
-              number = "";
-            }
-          }
-        }
-
-        // eslint-disable-next-line no-restricted-syntax
-        for await (const ob of obj) {
-          try {
-            const cont = await CreateContactService({
-              name: ob.name,
-              number: ob.number.replace(/\D/g, "")
-            });
-            conts.push({
-              id: cont.id,
-              name: cont.name,
-              number: cont.number
-            });
-          } catch (error) {
-            if (error.message === "ERR_DUPLICATED_CONTACT") {
-              const cont = await GetContactService({
-                name: ob.name,
-                number: ob.number.replace(/\D/g, ""),
-                email: ""
-              });
-              conts.push({
-                id: cont.id,
-                name: cont.name,
-                number: cont.number
-              });
-            }
-          }
-        }
-        msg.body = JSON.stringify(conts);
-      } catch (error) {
-        console.log(error);
-      }
-    } */
   } catch (err) {
     Sentry.captureException(err);
     logger.error(`Error handling whatsapp message: Err: ${err}`);
