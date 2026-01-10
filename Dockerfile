@@ -38,5 +38,5 @@ RUN npm run build
 # Exponer puerto
 EXPOSE 8080
 
-# Comando de inicio
-CMD ["npm", "run", "start:prod"]
+# Comando de inicio (CAMBIO AQUÍ)
+CMD ["npm", "start"]
