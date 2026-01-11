@@ -291,7 +291,19 @@ const getConversationHistory = async (ticketId: number): Promise<string> => {
   }
 };
 
-// ✨ NUEVA FUNCIÓN: Respuesta automática con Gemini
+// ✨ NUEVA FUNCIÓN: Determinar fase del ticket
+const getTicketPhase = (ticket: Ticket): "sales" | "ritual" | "personal" => {
+  // Si tiene un campo custom para marcar la fase, usarlo aquí
+  // Por ahora, usamos lógica basada en el estado
+  
+  // Verificar si el ticket tiene metadata para fase ritual
+  // Puedes agregar un campo "botPhase" en el modelo Ticket o usar otro método
+  
+  // Por defecto, si no hay agente asignado, usar fase de ventas
+  return "sales";
+};
+
+// ✨ NUEVA FUNCIÓN: Respuesta automática con Gemini (CON FASES)
 const handleGeminiAutoResponse = async (
   wbot: Session,
   msg: WbotMessage,
@@ -299,45 +311,99 @@ const handleGeminiAutoResponse = async (
   contact: Contact
 ) => {
   try {
-    // Solo responder si:
-    // 1. No es mensaje propio
-    // 2. No hay agente asignado al ticket
-    // 3. El ticket tiene una cola asignada (ya pasó por el menú inicial)
-    if (msg.fromMe || ticket.userId || !ticket.queueId) {
+    // ⚙️ CONFIGURA TU ID DE USUARIO AQUÍ
+    const AGENT_USER_ID = 1; // 👈 CAMBIAR POR TU ID REAL
+
+    // Determinar la fase del ticket
+    let phase: "sales" | "ritual" | "personal" = "sales";
+
+    // Si el ticket está cerrado, reabrirlo automáticamente
+    if (ticket.status === "closed") {
+      await UpdateTicketService({
+        ticketData: { status: "pending" },
+        ticketId: ticket.id
+      });
+      logger.info(`🔄 Ticket ${ticket.id} reabierto automáticamente`);
+      phase = "sales"; // Volver a fase de ventas
+    }
+
+    // Si hay agente asignado, no usar bot
+    if (ticket.userId) {
+      logger.info(`👤 Ticket ${ticket.id} tiene agente asignado, bot inactivo`);
       return;
     }
 
-    logger.info(`🤖 Generando respuesta automática con Gemini para ticket ${ticket.id}`);
+    // Si no tiene cola, esperar menú inicial
+    if (!ticket.queueId) {
+      return;
+    }
+
+    // Verificar si el ticket está marcado para fase ritual
+    // Puedes usar un campo custom del ticket para esto
+    // Por ejemplo: if (ticket.botPhase === "ritual") phase = "ritual";
+    
+    logger.info(`🤖 Procesando con bot de ${phase} para ticket ${ticket.id}`);
 
     // Obtener historial de conversación
     const conversationHistory = await getConversationHistory(ticket.id);
 
     // Generar respuesta con Gemini
-    const aiResponse = await GeminiService.generateResponse(
+    const { response, action } = await GeminiService.generateResponse(
       msg.body,
-      conversationHistory
+      conversationHistory,
+      {
+        phase,
+        hasPaid: false,
+        ritualInstructionsGiven: false
+      }
     );
 
-    if (!aiResponse) {
+    if (!response) {
       logger.warn("Gemini no generó respuesta");
       return;
     }
 
-    // Agregar carácter especial para que no se procese de nuevo
-    const formattedResponse = `\u200e${aiResponse}`;
+    // Procesar acciones especiales
+    if (action === "ASSIGN_TO_AGENT") {
+      // Cliente solicita atención personal
+      await UpdateTicketService({
+        ticketData: { userId: AGENT_USER_ID, status: "open" },
+        ticketId: ticket.id
+      });
+      logger.info(`👤 Ticket ${ticket.id} asignado al agente por solicitud del cliente`);
+    }
 
-    // Enviar respuesta
+    if (action === "PAYMENT_DETECTED") {
+      // Cliente menciona pago, asignar para verificación
+      await UpdateTicketService({
+        ticketData: { userId: AGENT_USER_ID, status: "open" },
+        ticketId: ticket.id
+      });
+      logger.info(`💰 Pago detectado en ticket ${ticket.id}, asignado para verificación`);
+    }
+
+    if (action === "RITUAL_INSTRUCTIONS_COMPLETE") {
+      // Bot de ritual terminó, asignar para seguimiento personal
+      await UpdateTicketService({
+        ticketData: { userId: AGENT_USER_ID, status: "open" },
+        ticketId: ticket.id
+      });
+      logger.info(`🌙 Instrucciones completadas en ticket ${ticket.id}, asignado para seguimiento`);
+    }
+
+    // Enviar respuesta al cliente
+    const formattedResponse = `\u200e${response}`;
     const sentMessage = await wbot.sendMessage(
       `${contact.number}@c.us`,
       formattedResponse
     );
 
-    // Guardar mensaje en la base de datos
+    // Guardar mensaje en base de datos
     await verifyMessage(sentMessage, ticket, contact);
 
-    logger.info(`✅ Respuesta automática enviada al ticket ${ticket.id}`);
+    logger.info(`✅ Bot de ${phase} respondió al ticket ${ticket.id}`);
   } catch (error) {
-    logger.error(`Error en respuesta automática con Gemini: ${error}`);
+    logger.error(`❌ Error en respuesta automática con Gemini:`, error);
     Sentry.captureException(error);
   }
 };
@@ -403,6 +469,44 @@ const handleMessage = async (
       groupContact
     );
 
+    // ✨ NUEVO: Comandos especiales para el agente (solo mensajes tuyos)
+    if (msg.fromMe && msg.body.startsWith("/")) {
+      const command = msg.body.toLowerCase();
+      
+      if (command === "/activar-ritual") {
+        // Marcar ticket para fase de ritual
+        logger.info(`🔮 Comando /activar-ritual ejecutado en ticket ${ticket.id}`);
+        
+        // Aquí podrías guardar en un campo custom del ticket
+        // Por ahora, desasignamos el ticket para que el bot tome control
+        await UpdateTicketService({
+          ticketData: { userId: null, status: "pending" },
+          ticketId: ticket.id
+        });
+        
+        // Mensaje de confirmación (opcional)
+        const confirmMsg = await wbot.sendMessage(
+          `${contact.number}@c.us`,
+          "\u200e✅ Fase de ritual activada. El bot comenzará a dar instrucciones."
+        );
+        await verifyMessage(confirmMsg, ticket, contact);
+        
+        return; // No procesar más
+      }
+      
+      if (command === "/info") {
+        // Mostrar información del ticket
+        const info = `📊 Info del Ticket #${ticket.id}
+👤 Usuario asignado: ${ticket.userId || "Ninguno (Bot activo)"}
+📋 Estado: ${ticket.status}
+🎯 Cola: ${ticket.queueId || "Sin cola"}`;
+        
+        const infoMsg = await wbot.sendMessage(`${contact.number}@c.us`, `\u200e${info}`);
+        await verifyMessage(infoMsg, ticket, contact);
+        return;
+      }
+    }
+
     if (msg.hasMedia) {
       await verifyMediaMessage(msg, ticket, contact);
     } else {
@@ -419,14 +523,13 @@ const handleMessage = async (
       await verifyQueue(wbot, msg, ticket, contact);
     }
 
-    // ✨ NUEVO: Respuesta automática con Gemini
+    // ✨ NUEVO: Respuesta automática con Gemini (DESPUÉS del menú de colas)
     // Solo para mensajes de texto del cliente en tickets con cola asignada
     if (
       !msg.fromMe &&
       !chat.isGroup &&
       msg.type === "chat" &&
-      ticket.queueId &&
-      !ticket.userId
+      ticket.queueId
     ) {
       await handleGeminiAutoResponse(wbot, msg, ticket, contact);
     }
