@@ -326,7 +326,6 @@ const handleGeminiAutoResponse = async (
       logger.info(`🔄 Ticket ${ticket.id} reabierto automáticamente`);
       phase = "sales"; // Volver a fase de ventas
     }
-
     // Si hay agente asignado, no usar bot
     if (ticket.userId) {
       logger.info(`👤 Ticket ${ticket.id} tiene agente asignado, bot inactivo`);
@@ -469,30 +468,30 @@ const handleMessage = async (
       groupContact
     );
 
-    // ✨ NUEVO: Comandos especiales para el agente (solo mensajes tuyos)
-    if (msg.fromMe && msg.body.startsWith("/")) {
-      const command = msg.body.toLowerCase();
+  // ✨ NUEVO: Comandos especiales para el agente (solo mensajes tuyos)
+  if (msg.fromMe && msg.body.startsWith("/")) {
+    const command = msg.body.toLowerCase();
+    
+    if (command === "/activar-ritual") {
+      // Marcar ticket para fase de ritual
+      logger.info(`🔮 Comando /activar-ritual ejecutado en ticket ${ticket.id}`);
       
-      if (command === "/activar-ritual") {
-        // Marcar ticket para fase de ritual
-        logger.info(`🔮 Comando /activar-ritual ejecutado en ticket ${ticket.id}`);
-        
-        // Aquí podrías guardar en un campo custom del ticket
-        // Por ahora, desasignamos el ticket para que el bot tome control
-        await UpdateTicketService({
-          ticketData: { userId: null, status: "pending" },
-          ticketId: ticket.id
-        });
-        
-        // Mensaje de confirmación (opcional)
-        const confirmMsg = await wbot.sendMessage(
-          `${contact.number}@c.us`,
-          "\u200e✅ Fase de ritual activada. El bot comenzará a dar instrucciones."
-        );
-        await verifyMessage(confirmMsg, ticket, contact);
-        
-        return; // No procesar más
-      }
+      // Aquí podrías guardar en un campo custom del ticket
+      // Por ahora, desasignamos el ticket para que el bot tome control
+      await UpdateTicketService({
+        ticketData: { userId: undefined, status: "pending" }, // 👈 CAMBIO AQUÍ
+        ticketId: ticket.id
+      });
+      
+      // Mensaje de confirmación (opcional)
+      const confirmMsg = await wbot.sendMessage(
+        `${contact.number}@c.us`,
+        "\u200e✅ Fase de ritual activada. El bot comenzará a dar instrucciones."
+      );
+      await verifyMessage(confirmMsg, ticket, contact);
+      
+      return; // No procesar más
+    }
       
       if (command === "/info") {
         // Mostrar información del ticket
