@@ -313,7 +313,7 @@ const handleGeminiAutoResponse = async (
   try {
     // 🧪 MODO DE PRUEBA - SOLO RESPONDER A UN NÚMERO ESPECÍFICO
     const TEST_MODE = true; // 👈 Cambiar a false cuando termines las pruebas
-    const TEST_NUMBER = "51987654321"; // 👈 CAMBIAR POR TU NÚMERO DE PRUEBA
+    const TEST_NUMBER = "51986848215"; // 👈 CAMBIAR POR TU NÚMERO DE PRUEBA
     
     if (TEST_MODE && contact.number !== TEST_NUMBER) {
       logger.info(`🚫 Test mode: Ignorando mensaje de ${contact.number}`);
