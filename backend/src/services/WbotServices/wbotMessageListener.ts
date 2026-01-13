@@ -303,7 +303,7 @@ const getTicketPhase = (ticket: Ticket): "sales" | "ritual" | "personal" => {
   return "sales";
 };
 
-// ✨ NUEVA FUNCIÓN: Respuesta automática con Gemini (CON FASES)
+// ✨ NUEVA FUNCIÓN: Respuesta automática con Gemini (CON MODO DE PRUEBA)
 const handleGeminiAutoResponse = async (
   wbot: Session,
   msg: WbotMessage,
@@ -311,20 +311,19 @@ const handleGeminiAutoResponse = async (
   contact: Contact
 ) => {
   try {
-        const TEST_MODE = true; // 👈 Cambiar a false cuando termines las pruebas
-    const TEST_NUMBER = "51986848215"; // 👈 CAMBIAR POR TU NÚMERO DE PRUEBA (sin +, sin espacios)
+    // 🧪 MODO DE PRUEBA - SOLO RESPONDER A UN NÚMERO ESPECÍFICO
+    const TEST_MODE = true; // 👈 Cambiar a false cuando termines las pruebas
+    const TEST_NUMBER = "51987654321"; // 👈 CAMBIAR POR TU NÚMERO DE PRUEBA
     
     if (TEST_MODE && contact.number !== TEST_NUMBER) {
-      logger.info(`🚫 Test mode: Ignorando mensaje de ${contact.number} (no es el número de prueba)`);
-      return; // No hacer nada, ignorar este mensaje
+      logger.info(`🚫 Test mode: Ignorando mensaje de ${contact.number}`);
+      return;
     }
     
     if (TEST_MODE) {
-      logger.info(`✅ Test mode: Procesando mensaje de ${contact.number} (número de prueba)`);
+      logger.info(`✅ Test mode: Procesando mensaje de ${contact.number}`);
     }
 
-
-    
     // ⚙️ CONFIGURA TU ID DE USUARIO AQUÍ
     const AGENT_USER_ID = 1; // 👈 CAMBIAR POR TU ID REAL
 
@@ -338,8 +337,9 @@ const handleGeminiAutoResponse = async (
         ticketId: ticket.id
       });
       logger.info(`🔄 Ticket ${ticket.id} reabierto automáticamente`);
-      phase = "sales"; // Volver a fase de ventas
+      phase = "sales";
     }
+
     // Si hay agente asignado, no usar bot
     if (ticket.userId) {
       logger.info(`👤 Ticket ${ticket.id} tiene agente asignado, bot inactivo`);
@@ -351,10 +351,6 @@ const handleGeminiAutoResponse = async (
       return;
     }
 
-    // Verificar si el ticket está marcado para fase ritual
-    // Puedes usar un campo custom del ticket para esto
-    // Por ejemplo: if (ticket.botPhase === "ritual") phase = "ritual";
-    
     logger.info(`🤖 Procesando con bot de ${phase} para ticket ${ticket.id}`);
 
     // Obtener historial de conversación
@@ -378,7 +374,6 @@ const handleGeminiAutoResponse = async (
 
     // Procesar acciones especiales
     if (action === "ASSIGN_TO_AGENT") {
-      // Cliente solicita atención personal
       await UpdateTicketService({
         ticketData: { userId: AGENT_USER_ID, status: "open" },
         ticketId: ticket.id
@@ -387,7 +382,6 @@ const handleGeminiAutoResponse = async (
     }
 
     if (action === "PAYMENT_DETECTED") {
-      // Cliente menciona pago, asignar para verificación
       await UpdateTicketService({
         ticketData: { userId: AGENT_USER_ID, status: "open" },
         ticketId: ticket.id
@@ -396,7 +390,6 @@ const handleGeminiAutoResponse = async (
     }
 
     if (action === "RITUAL_INSTRUCTIONS_COMPLETE") {
-      // Bot de ritual terminó, asignar para seguimiento personal
       await UpdateTicketService({
         ticketData: { userId: AGENT_USER_ID, status: "open" },
         ticketId: ticket.id
@@ -411,7 +404,6 @@ const handleGeminiAutoResponse = async (
       formattedResponse
     );
 
-    // Guardar mensaje en base de datos
     await verifyMessage(sentMessage, ticket, contact);
 
     logger.info(`✅ Bot de ${phase} respondió al ticket ${ticket.id}`);
