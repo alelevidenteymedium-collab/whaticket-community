@@ -311,6 +311,20 @@ const handleGeminiAutoResponse = async (
   contact: Contact
 ) => {
   try {
+        const TEST_MODE = true; // 👈 Cambiar a false cuando termines las pruebas
+    const TEST_NUMBER = "51986848215"; // 👈 CAMBIAR POR TU NÚMERO DE PRUEBA (sin +, sin espacios)
+    
+    if (TEST_MODE && contact.number !== TEST_NUMBER) {
+      logger.info(`🚫 Test mode: Ignorando mensaje de ${contact.number} (no es el número de prueba)`);
+      return; // No hacer nada, ignorar este mensaje
+    }
+    
+    if (TEST_MODE) {
+      logger.info(`✅ Test mode: Procesando mensaje de ${contact.number} (número de prueba)`);
+    }
+
+
+    
     // ⚙️ CONFIGURA TU ID DE USUARIO AQUÍ
     const AGENT_USER_ID = 1; // 👈 CAMBIAR POR TU ID REAL
 
