@@ -303,7 +303,9 @@ const getTicketPhase = (ticket: Ticket): "sales" | "ritual" | "personal" => {
   return "sales";
 };
 
-// ✨ NUEVA FUNCIÓN: Respuesta automática con Gemini (CON MODO DE PRUEBA)
+// ... (código anterior sin cambios hasta handleGeminiAutoResponse)
+
+// ✅ NUEVA FUNCIÓN: Respuesta automática con Gemini (MEJORADA)
 const handleGeminiAutoResponse = async (
   wbot: Session,
   msg: WbotMessage,
@@ -311,21 +313,30 @@ const handleGeminiAutoResponse = async (
   contact: Contact
 ) => {
   try {
-    // 🧪 MODO DE PRUEBA - SOLO RESPONDER A UN NÚMERO ESPECÍFICO
-    const TEST_MODE = true; // 👈 Cambiar a false cuando termines las pruebas
-    const TEST_NUMBER = "51986848215"; // 👈 CAMBIAR POR TU NÚMERO DE PRUEBA
+    // 🧪 CONFIGURACIÓN DE PRUEBA
+    const TEST_MODE = process.env.GEMINI_TEST_MODE === "true";
+    const TEST_NUMBER = process.env.GEMINI_TEST_NUMBER || "51986848215";
     
-    if (TEST_MODE && contact.number !== TEST_NUMBER) {
-      logger.info(`🚫 Test mode: Ignorando mensaje de ${contact.number}`);
-      return;
-    }
+    // Normalizar número (quitar caracteres no numéricos)
+    const normalizedContactNumber = contact.number.replace(/\D/g, '');
+    const normalizedTestNumber = TEST_NUMBER.replace(/\D/g, '');
     
     if (TEST_MODE) {
-      logger.info(`✅ Test mode: Procesando mensaje de ${contact.number}`);
+      logger.info(`🧪 TEST MODE ACTIVO - Número objetivo: ${normalizedTestNumber}`);
+      logger.info(`📱 Mensaje recibido de: ${normalizedContactNumber}`);
+      
+      if (normalizedContactNumber !== normalizedTestNumber) {
+        logger.info(`🚫 Test mode: Ignorando mensaje de ${normalizedContactNumber}`);
+        return;
+      }
+      
+      logger.info(`✅ Test mode: Procesando mensaje de ${normalizedContactNumber}`);
     }
 
-    // ⚙️ CONFIGURA TU ID DE USUARIO AQUÍ
-    const AGENT_USER_ID = 1; // 👈 CAMBIAR POR TU ID REAL
+    // ⚙️ ID del agente (obtener de variable de entorno o usar 1 por defecto)
+    const AGENT_USER_ID = parseInt(process.env.AGENT_USER_ID || "1");
+    
+    logger.info(`🔧 Configuración: AGENT_USER_ID=${AGENT_USER_ID}, TEST_MODE=${TEST_MODE}`);
 
     // Determinar la fase del ticket
     let phase: "sales" | "ritual" | "personal" = "sales";
@@ -342,19 +353,31 @@ const handleGeminiAutoResponse = async (
 
     // Si hay agente asignado, no usar bot
     if (ticket.userId) {
-      logger.info(`👤 Ticket ${ticket.id} tiene agente asignado, bot inactivo`);
+      logger.info(`👤 Ticket ${ticket.id} tiene agente ${ticket.userId} asignado, bot inactivo`);
       return;
     }
 
     // Si no tiene cola, esperar menú inicial
     if (!ticket.queueId) {
+      logger.info(`⏳ Ticket ${ticket.id} sin cola asignada, esperando menú`);
+      return;
+    }
+
+    // Verificar si Gemini está configurado
+    if (!GeminiService.isConfigured()) {
+      logger.warn(`⚠️ Gemini no configurado, saltando respuesta automática`);
       return;
     }
 
     logger.info(`🤖 Procesando con bot de ${phase} para ticket ${ticket.id}`);
+    logger.info(`📝 Mensaje del cliente: "${msg.body}"`);
 
     // Obtener historial de conversación
     const conversationHistory = await getConversationHistory(ticket.id);
+    
+    if (conversationHistory) {
+      logger.info(`📚 Historial cargado (${conversationHistory.split('\n').length} mensajes)`);
+    }
 
     // Generar respuesta con Gemini
     const { response, action } = await GeminiService.generateResponse(
@@ -368,9 +391,11 @@ const handleGeminiAutoResponse = async (
     );
 
     if (!response) {
-      logger.warn("Gemini no generó respuesta");
+      logger.warn(`⚠️ Gemini no generó respuesta para ticket ${ticket.id}`);
       return;
     }
+
+    logger.info(`💬 Gemini generó respuesta: "${response.substring(0, 100)}..."`);
 
     // Procesar acciones especiales
     if (action === "ASSIGN_TO_AGENT") {
@@ -378,7 +403,7 @@ const handleGeminiAutoResponse = async (
         ticketData: { userId: AGENT_USER_ID, status: "open" },
         ticketId: ticket.id
       });
-      logger.info(`👤 Ticket ${ticket.id} asignado al agente por solicitud del cliente`);
+      logger.info(`👤 Ticket ${ticket.id} asignado al agente ${AGENT_USER_ID} por solicitud del cliente`);
     }
 
     if (action === "PAYMENT_DETECTED") {
@@ -386,7 +411,7 @@ const handleGeminiAutoResponse = async (
         ticketData: { userId: AGENT_USER_ID, status: "open" },
         ticketId: ticket.id
       });
-      logger.info(`💰 Pago detectado en ticket ${ticket.id}, asignado para verificación`);
+      logger.info(`💰 Pago detectado en ticket ${ticket.id}, asignado a agente ${AGENT_USER_ID} para verificación`);
     }
 
     if (action === "RITUAL_INSTRUCTIONS_COMPLETE") {
@@ -394,11 +419,14 @@ const handleGeminiAutoResponse = async (
         ticketData: { userId: AGENT_USER_ID, status: "open" },
         ticketId: ticket.id
       });
-      logger.info(`🌙 Instrucciones completadas en ticket ${ticket.id}, asignado para seguimiento`);
+      logger.info(`🌙 Instrucciones completadas en ticket ${ticket.id}, asignado a agente ${AGENT_USER_ID}`);
     }
 
     // Enviar respuesta al cliente
     const formattedResponse = `\u200e${response}`;
+    
+    logger.info(`📤 Enviando respuesta al cliente...`);
+    
     const sentMessage = await wbot.sendMessage(
       `${contact.number}@c.us`,
       formattedResponse
@@ -406,12 +434,18 @@ const handleGeminiAutoResponse = async (
 
     await verifyMessage(sentMessage, ticket, contact);
 
-    logger.info(`✅ Bot de ${phase} respondió al ticket ${ticket.id}`);
-  } catch (error) {
-    logger.error(`❌ Error en respuesta automática con Gemini:`, error);
+    logger.info(`✅ Bot de ${phase} respondió exitosamente al ticket ${ticket.id}`);
+    
+  } catch (error: any) {
+    logger.error(`❌ Error en respuesta automática con Gemini para ticket ${ticket.id}:`, error);
+    logger.error(`📋 Stack trace:`, error.stack);
     Sentry.captureException(error);
   }
 };
+
+// ... (resto del código sin cambios)
+
+
 
 const handleMessage = async (
   msg: WbotMessage,
