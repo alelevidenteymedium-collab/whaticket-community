@@ -50,7 +50,22 @@ export const initWbot = async (whatsapp: Whatsapp): Promise<Session> => {
             '--single-process',
             '--disable-gpu',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-software-rasterizer',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-extensions',
+            '--disable-plugins',
+            '--mute-audio',
+            '--no-default-browser-check',
+            '--no-experiments',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--disable-sync',
+            '--disable-breakpad',
+            '--disable-notifications',
+            '--disable-default-apps'
           ],
           timeout: 300000,
           protocolTimeout: 300000
