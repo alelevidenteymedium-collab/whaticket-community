@@ -2,7 +2,7 @@ import { Client, LocalAuth } from "whatsapp-web.js";
 import { getIO } from "../../libs/socket";
 import Whatsapp from "../../models/Whatsapp";
 import { logger } from "../../utils/logger";
-import { wbotMessageListener } from "./wbotMessageListener";
+import { handleMessage } from "./wbotMessageListener";
 import AppError from "../../errors/AppError";
 
 interface Session extends Client {
@@ -21,7 +21,7 @@ const syncUnreadMessages = async (wbot: Session) => {
       });
 
       unreadMessages.forEach(async msg => {
-        await wbotMessageListener.handleMessage(msg, wbot);
+        await handleMessage(msg, wbot);
       });
 
       await chat.sendSeen();
@@ -47,15 +47,13 @@ export const initWbot = async (whatsapp: Whatsapp): Promise<Session> => {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process', // ✅ Crítico para Railway
+            '--single-process',
             '--disable-gpu',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-software-rasterizer'
+            '--disable-features=IsolateOrigins,site-per-process'
           ],
-          // ✅ TIMEOUTS EXTENDIDOS - Crítico para Railway
-          timeout: 300000, // 5 minutos (antes era 30 segundos por defecto)
-          protocolTimeout: 300000 // 5 minutos
+          timeout: 300000,
+          protocolTimeout: 300000
         }
       }) as Session;
 
@@ -144,7 +142,7 @@ export const initWbot = async (whatsapp: Whatsapp): Promise<Session> => {
 
         setTimeout(() => {
           logger.info(`🔄 Intentando reconectar ${whatsapp.name}...`);
-          initWbot(whatsapp);
+          StartWhatsAppSession(whatsapp);
         }, 5000);
       });
 
@@ -156,6 +154,11 @@ export const initWbot = async (whatsapp: Whatsapp): Promise<Session> => {
       reject(err);
     }
   });
+};
+
+// ✅ ESTE ES EL EXPORT QUE FALTA
+export const StartWhatsAppSession = async (whatsapp: Whatsapp): Promise<void> => {
+  await initWbot(whatsapp);
 };
 
 export const getWbot = (whatsappId: number): Session => {
@@ -180,3 +183,6 @@ export const removeWbot = (whatsappId: number): void => {
     logger.error(err);
   }
 };
+
+// Importar después de las definiciones para evitar referencias circulares
+import { wbotMessageListener } from "./wbotMessageListener";
