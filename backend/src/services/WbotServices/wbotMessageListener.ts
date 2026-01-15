@@ -447,11 +447,21 @@ const handleGeminiAutoResponse = async (
 
 
 
+// ... (todo el código anterior hasta handleMessage)
+
 const handleMessage = async (
   msg: WbotMessage,
   wbot: Session
 ): Promise<void> => {
+  // ✅ LOG 1: Mensaje recibido
+  logger.info(`📨 ============ MENSAJE RECIBIDO ============`);
+  logger.info(`📱 De: ${msg.from}`);
+  logger.info(`📝 Cuerpo: ${msg.body}`);
+  logger.info(`🔄 Es de mí: ${msg.fromMe}`);
+  logger.info(`📋 Tipo: ${msg.type}`);
+
   if (!isValidMsg(msg)) {
+    logger.info(`❌ Mensaje no válido, ignorando`);
     return;
   }
 
@@ -478,6 +488,7 @@ const handleMessage = async (
     const chat = await msg.getChat();
 
     if (chat.isGroup) {
+      logger.info(`👥 Mensaje de grupo, ignorando`);
       let msgGroupContact;
 
       if (msg.fromMe) {
@@ -488,11 +499,13 @@ const handleMessage = async (
 
       groupContact = await verifyContact(msgGroupContact);
     }
+    
     const whatsapp = await ShowWhatsAppService(wbot.id!);
-
     const unreadMessages = msg.fromMe ? 0 : chat.unreadCount;
-
     const contact = await verifyContact(msgContact);
+
+    // ✅ LOG 2: Contacto identificado
+    logger.info(`👤 Contacto identificado: ${contact.name} (${contact.number})`);
 
     if (
       unreadMessages === 0 &&
@@ -508,33 +521,34 @@ const handleMessage = async (
       groupContact
     );
 
-  // ✨ NUEVO: Comandos especiales para el agente (solo mensajes tuyos)
-  if (msg.fromMe && msg.body.startsWith("/")) {
-    const command = msg.body.toLowerCase();
-    
-    if (command === "/activar-ritual") {
-      // Marcar ticket para fase de ritual
-      logger.info(`🔮 Comando /activar-ritual ejecutado en ticket ${ticket.id}`);
+    // ✅ LOG 3: Ticket creado/encontrado
+    logger.info(`🎫 Ticket ID: ${ticket.id}`);
+    logger.info(`🎫 Ticket Status: ${ticket.status}`);
+    logger.info(`🎫 Ticket userId: ${ticket.userId || 'Sin asignar'}`);
+    logger.info(`🎫 Ticket queueId: ${ticket.queueId || 'Sin cola'}`);
+
+    // Comandos especiales para el agente
+    if (msg.fromMe && msg.body.startsWith("/")) {
+      const command = msg.body.toLowerCase();
       
-      // Aquí podrías guardar en un campo custom del ticket
-      // Por ahora, desasignamos el ticket para que el bot tome control
-      await UpdateTicketService({
-        ticketData: { userId: undefined, status: "pending" }, // 👈 CAMBIO AQUÍ
-        ticketId: ticket.id
-      });
-      
-      // Mensaje de confirmación (opcional)
-      const confirmMsg = await wbot.sendMessage(
-        `${contact.number}@c.us`,
-        "\u200e✅ Fase de ritual activada. El bot comenzará a dar instrucciones."
-      );
-      await verifyMessage(confirmMsg, ticket, contact);
-      
-      return; // No procesar más
-    }
+      if (command === "/activar-ritual") {
+        logger.info(`🔮 Comando /activar-ritual ejecutado en ticket ${ticket.id}`);
+        
+        await UpdateTicketService({
+          ticketData: { userId: undefined, status: "pending" },
+          ticketId: ticket.id
+        });
+        
+        const confirmMsg = await wbot.sendMessage(
+          `${contact.number}@c.us`,
+          "\u200e✅ Fase de ritual activada. El bot comenzará a dar instrucciones."
+        );
+        await verifyMessage(confirmMsg, ticket, contact);
+        
+        return;
+      }
       
       if (command === "/info") {
-        // Mostrar información del ticket
         const info = `📊 Info del Ticket #${ticket.id}
 👤 Usuario asignado: ${ticket.userId || "Ninguno (Bot activo)"}
 📋 Estado: ${ticket.status}
@@ -547,11 +561,13 @@ const handleMessage = async (
     }
 
     if (msg.hasMedia) {
+      logger.info(`🖼️ Mensaje con media`);
       await verifyMediaMessage(msg, ticket, contact);
     } else {
       await verifyMessage(msg, ticket, contact);
     }
 
+    // ✅ LOG 4: Verificar si debe pasar por el menú de colas
     if (
       !ticket.queue &&
       !chat.isGroup &&
@@ -559,18 +575,32 @@ const handleMessage = async (
       !ticket.userId &&
       whatsapp.queues.length >= 1
     ) {
+      logger.info(`📋 Enviando menú de colas`);
       await verifyQueue(wbot, msg, ticket, contact);
     }
 
-    // ✨ NUEVO: Respuesta automática con Gemini (DESPUÉS del menú de colas)
-    // Solo para mensajes de texto del cliente en tickets con cola asignada
+    // ✅ LOG 5: Verificar condiciones para respuesta automática
+    logger.info(`🤖 ========== VERIFICANDO BOT ==========`);
+    logger.info(`🤖 msg.fromMe: ${msg.fromMe}`);
+    logger.info(`🤖 chat.isGroup: ${chat.isGroup}`);
+    logger.info(`🤖 msg.type: ${msg.type}`);
+    logger.info(`🤖 ticket.queueId: ${ticket.queueId}`);
+
+    // Respuesta automática con Gemini
     if (
       !msg.fromMe &&
       !chat.isGroup &&
       msg.type === "chat" &&
       ticket.queueId
     ) {
+      logger.info(`✅ Todas las condiciones cumplidas, llamando a handleGeminiAutoResponse`);
       await handleGeminiAutoResponse(wbot, msg, ticket, contact);
+    } else {
+      logger.info(`❌ Condiciones NO cumplidas para bot:`);
+      if (msg.fromMe) logger.info(`   - Es mensaje propio`);
+      if (chat.isGroup) logger.info(`   - Es mensaje de grupo`);
+      if (msg.type !== "chat") logger.info(`   - Tipo no es 'chat': ${msg.type}`);
+      if (!ticket.queueId) logger.info(`   - No tiene cola asignada`);
     }
 
     if (msg.type === "vcard") {
@@ -602,9 +632,11 @@ const handleMessage = async (
     }
   } catch (err) {
     Sentry.captureException(err);
-    logger.error(`Error handling whatsapp message: Err: ${err}`);
+    logger.error(`❌ Error handling whatsapp message: ${err}`);
   }
 };
+
+// ... (resto del código sin cambios)
 
 const handleMsgAck = async (msg: WbotMessage, ack: MessageAck) => {
   await new Promise(r => setTimeout(r, 500));
