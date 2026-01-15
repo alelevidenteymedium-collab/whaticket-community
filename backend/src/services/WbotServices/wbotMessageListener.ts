@@ -36,18 +36,37 @@ interface Session extends Client {
 const writeFileAsync = promisify(writeFile);
 
 const verifyContact = async (msgContact: WbotContact): Promise<Contact> => {
-  const profilePicUrl = await msgContact.getProfilePicUrl();
+  try {
+    let profilePicUrl: string | undefined;
+    
+    // ✅ PROTECCIÓN: Si falla obtener la foto, continuar sin ella
+    try {
+      profilePicUrl = await msgContact.getProfilePicUrl();
+    } catch (error) {
+      logger.warn(`⚠️ No se pudo obtener foto de perfil: ${error}`);
+      profilePicUrl = undefined;
+    }
 
-  const contactData = {
-    name: msgContact.name || msgContact.pushname || msgContact.id.user,
-    number: msgContact.id.user,
-    profilePicUrl,
-    isGroup: msgContact.isGroup
-  };
+    const contactData = {
+      name: msgContact.name || msgContact.pushname || msgContact.id.user,
+      number: msgContact.id.user,
+      profilePicUrl,
+      isGroup: msgContact.isGroup
+    };
 
-  const contact = CreateOrUpdateContactService(contactData);
-
-  return contact;
+    const contact = CreateOrUpdateContactService(contactData);
+    return contact;
+  } catch (error) {
+    logger.error(`❌ Error en verifyContact: ${error}`);
+    // Crear contacto mínimo si falla
+    const contact = CreateOrUpdateContactService({
+      name: msgContact.id.user,
+      number: msgContact.id.user,
+      profilePicUrl: undefined,
+      isGroup: false
+    });
+    return contact;
+  }
 };
 
 const verifyQuotedMessage = async (
@@ -135,36 +154,41 @@ const verifyMediaMessage = async (
   return newMessage;
 };
 
+// ✅ AGREGAR try-catch a verifyMessage también
 const verifyMessage = async (
   msg: WbotMessage,
   ticket: Ticket,
   contact: Contact
 ) => {
-  if (msg.type === "location") msg = prepareLocation(msg);
+  try {
+    if (msg.type === "location") msg = prepareLocation(msg);
 
-  const quotedMsg = await verifyQuotedMessage(msg);
-  const messageData = {
-    id: msg.id.id,
-    ticketId: ticket.id,
-    contactId: msg.fromMe ? undefined : contact.id,
-    body: msg.body,
-    fromMe: msg.fromMe,
-    mediaType: msg.type,
-    read: msg.fromMe,
-    quotedMsgId: quotedMsg?.id
-  };
+    const quotedMsg = await verifyQuotedMessage(msg);
+    const messageData = {
+      id: msg.id.id,
+      ticketId: ticket.id,
+      contactId: msg.fromMe ? undefined : contact.id,
+      body: msg.body,
+      fromMe: msg.fromMe,
+      mediaType: msg.type,
+      read: msg.fromMe,
+      quotedMsgId: quotedMsg?.id
+    };
 
-  // @ts-ignore
-  await ticket.update({
-    lastMessage:
-      msg.type === "location"
-        ? msg.location.description
-          ? "Localization - " + msg.location.description.split("\\n")[0]
-          : "Localization"
-        : msg.body
-  });
+    await ticket.update({
+      lastMessage:
+        msg.type === "location"
+          ? msg.location.description
+            ? "Localization - " + msg.location.description.split("\\n")[0]
+            : "Localization"
+          : msg.body
+    });
 
-  await CreateMessageService({ messageData });
+    await CreateMessageService({ messageData });
+  } catch (error) {
+    logger.error(`❌ Error en verifyMessage: ${error}`);
+    // Continuar aunque falle
+  }
 };
 
 const prepareLocation = (msg: WbotMessage): WbotMessage => {
@@ -453,7 +477,6 @@ const handleMessage = async (
   msg: WbotMessage,
   wbot: Session
 ): Promise<void> => {
-  // ✅ LOG 1: Mensaje recibido
   logger.info(`📨 ============ MENSAJE RECIBIDO ============`);
   logger.info(`📱 De: ${msg.from}`);
   logger.info(`📝 Cuerpo: ${msg.body}`);
@@ -469,20 +492,26 @@ const handleMessage = async (
     let msgContact: WbotContact;
     let groupContact: Contact | undefined;
 
-    if (msg.fromMe) {
-      if (/\u200e/.test(msg.body[0])) return;
+    // ✅ PROTECCIÓN: Try-catch para getContact
+    try {
+      if (msg.fromMe) {
+        if (/\u200e/.test(msg.body[0])) return;
 
-      if (
-        !msg.hasMedia &&
-        msg.type !== "location" &&
-        msg.type !== "chat" &&
-        msg.type !== "vcard"
-      )
-        return;
+        if (
+          !msg.hasMedia &&
+          msg.type !== "location" &&
+          msg.type !== "chat" &&
+          msg.type !== "vcard"
+        )
+          return;
 
-      msgContact = await wbot.getContactById(msg.to);
-    } else {
-      msgContact = await msg.getContact();
+        msgContact = await wbot.getContactById(msg.to);
+      } else {
+        msgContact = await msg.getContact();
+      }
+    } catch (error) {
+      logger.error(`❌ Error obteniendo contacto: ${error}`);
+      return; // Salir si no se puede obtener el contacto
     }
 
     const chat = await msg.getChat();
@@ -504,7 +533,6 @@ const handleMessage = async (
     const unreadMessages = msg.fromMe ? 0 : chat.unreadCount;
     const contact = await verifyContact(msgContact);
 
-    // ✅ LOG 2: Contacto identificado
     logger.info(`👤 Contacto identificado: ${contact.name} (${contact.number})`);
 
     if (
@@ -521,13 +549,12 @@ const handleMessage = async (
       groupContact
     );
 
-    // ✅ LOG 3: Ticket creado/encontrado
     logger.info(`🎫 Ticket ID: ${ticket.id}`);
     logger.info(`🎫 Ticket Status: ${ticket.status}`);
     logger.info(`🎫 Ticket userId: ${ticket.userId || 'Sin asignar'}`);
     logger.info(`🎫 Ticket queueId: ${ticket.queueId || 'Sin cola'}`);
 
-    // Comandos especiales para el agente
+    // Comandos especiales
     if (msg.fromMe && msg.body.startsWith("/")) {
       const command = msg.body.toLowerCase();
       
@@ -567,7 +594,6 @@ const handleMessage = async (
       await verifyMessage(msg, ticket, contact);
     }
 
-    // ✅ LOG 4: Verificar si debe pasar por el menú de colas
     if (
       !ticket.queue &&
       !chat.isGroup &&
@@ -579,7 +605,6 @@ const handleMessage = async (
       await verifyQueue(wbot, msg, ticket, contact);
     }
 
-    // ✅ LOG 5: Verificar condiciones para respuesta automática
     logger.info(`🤖 ========== VERIFICANDO BOT ==========`);
     logger.info(`🤖 msg.fromMe: ${msg.fromMe}`);
     logger.info(`🤖 chat.isGroup: ${chat.isGroup}`);
@@ -627,12 +652,13 @@ const handleMessage = async (
           });
         }
       } catch (error) {
-        console.log(error);
+        logger.error(`Error procesando vcard: ${error}`);
       }
     }
-  } catch (err) {
+  } catch (err: any) {
     Sentry.captureException(err);
-    logger.error(`❌ Error handling whatsapp message: ${err}`);
+    logger.error(`❌ Error handling whatsapp message: ${err.message || err}`);
+    logger.error(`📋 Stack: ${err.stack}`);
   }
 };
 
