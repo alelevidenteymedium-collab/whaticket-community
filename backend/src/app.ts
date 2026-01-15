@@ -26,19 +26,27 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(Sentry.Handlers.requestHandler());
 
-// 1. Archivos públicos/uploads (ANTES de las rutas API)
+// Archivos estáticos para uploads
 app.use("/public", express.static(uploadConfig.directory));
 
-// 2. TODAS las rutas de API
+// TODAS las rutas API
 app.use(routes);
 
-// 3. Manejador de errores de Sentry
+// Manejador de errores de Sentry
 app.use(Sentry.Handlers.errorHandler());
 
-// 4. Manejador de errores personalizado
+// ✅ MANEJADOR DE ERRORES - ANTES del frontend estático
 app.use(async (err: Error, req: Request, res: Response, next: NextFunction) => {
+  // Si ya se envió una respuesta, no hacer nada
+  if (res.headersSent) {
+    return next(err);
+  }
+
   if (err instanceof AppError) {
-    logger.warn(err);
+    // ✅ NO loggear errores JWT repetitivos (son del frontend)
+    if (err.message !== "jwt must be provided") {
+      logger.warn(err);
+    }
     return res.status(err.statusCode).json({ error: err.message });
   }
 
@@ -46,29 +54,35 @@ app.use(async (err: Error, req: Request, res: Response, next: NextFunction) => {
   return res.status(500).json({ error: "Internal server error" });
 });
 
-// 5. Frontend estático (DESPUÉS del manejo de errores)
+// Frontend estático (DESPUÉS del manejo de errores)
 app.use(express.static(path.join(__dirname, '../public')));
 
-// 6. Catch-all para SPA - SOLO para rutas que NO sean API
-app.get('*', (req, res, next) => {
-  // Si la ruta comienza con /api, /auth, etc., es una ruta API
-  // y debe pasar al manejador de errores (404)
-  if (req.path.startsWith('/api') || 
-      req.path.startsWith('/auth') || 
-      req.path.startsWith('/public') ||
-      req.path.startsWith('/contacts') ||
-      req.path.startsWith('/messages') ||
-      req.path.startsWith('/tickets') ||
-      req.path.startsWith('/whatsapp') ||
-      req.path.startsWith('/queues') ||
-      req.path.startsWith('/users') ||
-      req.path.startsWith('/settings') ||
-      req.path.startsWith('/quickanswers')) {
-    // No enviar HTML, dejar que retorne error API
+// ✅ Catch-all para SPA - MUY ESPECÍFICO
+app.get('*', (req, res) => {
+  // Lista de prefijos de rutas API
+  const apiPaths = [
+    '/api',
+    '/auth', 
+    '/contacts',
+    '/messages',
+    '/tickets',
+    '/whatsapp',
+    '/queues',
+    '/users',
+    '/settings',
+    '/quickanswers',
+    '/quick-answers',
+    '/tags',
+    '/chatbot',
+    '/webhooks'
+  ];
+
+  // Si es una ruta API, retornar 404 JSON
+  if (apiPaths.some(path => req.path.startsWith(path))) {
     return res.status(404).json({ error: "Not found" });
   }
-  
-  // Para rutas del frontend SPA, enviar index.html
+
+  // Para cualquier otra ruta, servir el frontend SPA
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
