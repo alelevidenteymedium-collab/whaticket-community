@@ -11,7 +11,6 @@ class GeminiService {
   private genAI: GoogleGenerativeAI | null = null;
   private model: any = null;
 
-  // Prompts para cada bot
   private readonly SALES_BOT_PROMPT = `Eres un asistente virtual especializado en servicios de videncia y rituales esotéricos.
 
 Tu objetivo es:
@@ -70,17 +69,40 @@ Tono: Serio, instructivo, místico 🕯️🌿`;
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
     
+    logger.info("🔧 Inicializando GeminiService...");
+    logger.info(`🔑 GEMINI_API_KEY presente: ${apiKey ? 'SÍ' : 'NO'}`);
+    
     if (!apiKey) {
-      logger.warn("⚠️ GEMINI_API_KEY no está configurada. Las respuestas automáticas no funcionarán.");
+      logger.error("❌ GEMINI_API_KEY no está configurada en las variables de entorno");
       return;
     }
 
+    logger.info(`🔑 API Key (primeros 20 chars): ${apiKey.substring(0, 20)}...`);
+    logger.info(`🔑 API Key (longitud): ${apiKey.length} caracteres`);
+
     try {
+      logger.info("📦 Creando instancia de GoogleGenerativeAI...");
       this.genAI = new GoogleGenerativeAI(apiKey);
-      this.model = this.genAI.getGenerativeModel({ model: "gemini-pro" });
+      
+      logger.info("📦 Obteniendo modelo gemini-pro...");
+      this.model = this.genAI.getGenerativeModel({ 
+        model: "gemini-pro",
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 1024,
+        },
+      });
+      
       logger.info("✅ Gemini AI inicializado correctamente");
-    } catch (error) {
-      logger.error("❌ Error inicializando Gemini AI:", error);
+    } catch (error: any) {
+      logger.error("❌ Error inicializando Gemini AI:");
+      logger.error(`   Nombre: ${error.name}`);
+      logger.error(`   Mensaje: ${error.message}`);
+      logger.error(`   Stack: ${error.stack}`);
+      this.genAI = null;
+      this.model = null;
     }
   }
 
@@ -89,21 +111,31 @@ Tono: Serio, instructivo, místico 🕯️🌿`;
     conversationHistory: string = "",
     context: BotContext
   ): Promise<{ response: string | null; action?: string }> {
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    logger.info("🤖 INICIANDO generateResponse");
+    logger.info(`📝 Prompt: "${prompt}"`);
+    logger.info(`📋 Fase: ${context.phase}`);
+    logger.info(`📚 Historial presente: ${conversationHistory ? 'SÍ' : 'NO'}`);
+    
     try {
       if (!this.model) {
-        logger.warn("Gemini no está configurado. Saltando respuesta automática.");
+        logger.error("❌ CRÍTICO: this.model es null");
+        logger.error("   Gemini no se inicializó correctamente");
         return { response: null };
       }
 
-      // Seleccionar el bot apropiado según la fase
+      logger.info("✅ Modelo verificado, continuando...");
+
       let systemPrompt: string;
       
       if (context.phase === "sales") {
         systemPrompt = this.SALES_BOT_PROMPT;
+        logger.info("🛍️ Usando prompt de VENTAS");
       } else if (context.phase === "ritual") {
         systemPrompt = this.RITUAL_BOT_PROMPT;
+        logger.info("🔮 Usando prompt de RITUAL");
       } else {
-        // Fase personal, no usar bot
+        logger.info("👤 Fase PERSONAL - Bot desactivado");
         return { response: null };
       }
 
@@ -111,12 +143,27 @@ Tono: Serio, instructivo, místico 🕯️🌿`;
         ? `${systemPrompt}\n\nHistorial de conversación:\n${conversationHistory}\n\nNuevo mensaje del cliente: ${prompt}\n\nTu respuesta:`
         : `${systemPrompt}\n\nMensaje del cliente: ${prompt}\n\nTu respuesta:`;
 
+      logger.info(`📏 Longitud del prompt completo: ${fullPrompt.length} caracteres`);
+      logger.info("📤 Llamando a model.generateContent...");
+      
+      const startTime = Date.now();
       const result = await this.model.generateContent(fullPrompt);
-      const response = await result.response;
+      const elapsed = Date.now() - startTime;
+      
+      logger.info(`⏱️ Tiempo de respuesta: ${elapsed}ms`);
+      logger.info("📥 Obteniendo response del result...");
+      
+      const response = result.response;
+      
+      logger.info("📄 Llamando a response.text()...");
       const text = response.text().trim();
+
+      logger.info(`✅ Texto recibido (${text.length} caracteres)`);
+      logger.info(`💬 Primeros 200 chars: "${text.substring(0, 200)}..."`);
 
       // Detectar acciones especiales
       if (text.includes("SOLICITAR_ATENCION_PERSONAL")) {
+        logger.info("🔔 Acción detectada: SOLICITAR_ATENCION_PERSONAL");
         return {
           response: "Un momento, te estoy conectando con nuestra vidente principal. Ella te atenderá personalmente para brindarte la mejor experiencia. ✨",
           action: "ASSIGN_TO_AGENT"
@@ -124,6 +171,7 @@ Tono: Serio, instructivo, místico 🕯️🌿`;
       }
 
       if (text.includes("PAGO_DETECTADO")) {
+        logger.info("🔔 Acción detectada: PAGO_DETECTADO");
         return {
           response: "Gracias por tu pago. Un momento mientras verificamos tu transacción. Te contactaremos pronto. 💫",
           action: "PAYMENT_DETECTED"
@@ -131,23 +179,74 @@ Tono: Serio, instructivo, místico 🕯️🌿`;
       }
 
       if (text.includes("RITUAL_COMPLETO")) {
+        logger.info("🔔 Acción detectada: RITUAL_COMPLETO");
         return {
           response: "Perfecto. Ahora nuestra vidente te contactará personalmente para acompañarte en el proceso y resolver cualquier duda adicional. Muchas gracias por tu confianza. 🌙✨",
           action: "RITUAL_INSTRUCTIONS_COMPLETE"
         };
       }
 
-      logger.info(`🤖 Bot de ${context.phase} respondió (${text.length} caracteres)`);
+      logger.info("✅ Respuesta generada exitosamente");
+      logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       return { response: text };
 
     } catch (error: any) {
-      logger.error("❌ Error generando respuesta con Gemini:", error.message);
+      logger.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      logger.error("❌ ERROR EN generateResponse");
+      logger.error(`📛 Tipo de error: ${error.constructor.name}`);
+      logger.error(`📛 Nombre: ${error.name}`);
+      logger.error(`📛 Mensaje: ${error.message}`);
+      
+      // Logs específicos para diferentes tipos de errores
+      if (error.message) {
+        if (error.message.includes("API key")) {
+          logger.error("🔑 ERROR DE API KEY");
+          logger.error("   - Verifica que la API key sea válida");
+          logger.error("   - Revisa en https://aistudio.google.com/app/apikey");
+        }
+        
+        if (error.message.includes("quota") || error.message.includes("limit")) {
+          logger.error("💰 ERROR DE CUOTA/LÍMITE");
+          logger.error("   - Has excedido el límite de requests gratuitos");
+          logger.error("   - Espera o actualiza tu plan en Google AI Studio");
+        }
+        
+        if (error.message.includes("SAFETY") || error.message.includes("blocked")) {
+          logger.error("🚫 CONTENIDO BLOQUEADO");
+          logger.error("   - El contenido fue bloqueado por filtros de seguridad");
+          logger.error("   - Intenta reformular el prompt");
+        }
+        
+        if (error.message.includes("timeout") || error.message.includes("ECONNREFUSED")) {
+          logger.error("🌐 ERROR DE CONEXIÓN");
+          logger.error("   - No se pudo conectar a la API de Gemini");
+          logger.error("   - Verifica la conectividad de Railway");
+        }
+
+        if (error.message.includes("fetch") || error.message.includes("network")) {
+          logger.error("🌐 ERROR DE RED");
+          logger.error("   - Problema de red entre Railway y Google");
+        }
+      }
+      
+      // Log del error completo
+      logger.error("📋 Stack trace completo:");
+      logger.error(error.stack || "No stack trace disponible");
+      
+      // Si hay propiedades adicionales en el error
+      logger.error("📦 Propiedades del error:");
+      logger.error(JSON.stringify(error, null, 2));
+      
+      logger.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      
       return { response: null };
     }
   }
 
   isConfigured(): boolean {
-    return this.model !== null;
+    const configured = this.model !== null;
+    logger.info(`🔍 isConfigured llamado: ${configured}`);
+    return configured;
   }
 }
 
